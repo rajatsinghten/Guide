@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.claim import Claim
@@ -17,9 +17,25 @@ from app.models.worker import Worker
 from app.schemas.policy import PolicyCreate, PolicyRecommendationResponse, PolicyResponse
 from app.services.policy_recommendation import generate_policy_recommendations
 from app.services.pricing_engine import calculate_premium
+from app.utils.constants import POLICY_DURATION_DAYS, POLICY_RENEWAL_WINDOW_HOURS
 from app.utils.deps import get_current_worker, get_db
 
 router = APIRouter(prefix="/api/v1/policies", tags=["Policies"])
+
+
+def _currently_active_policy_filters(now: datetime) -> tuple:
+    return (
+        Policy.status == "active",
+        Policy.start_date <= now,
+        or_(Policy.end_date.is_(None), Policy.end_date > now),
+    )
+
+
+def _is_within_renewal_window(policy: Policy, now: datetime) -> bool:
+    if policy.end_date is None:
+        return False
+    renewal_window_start = policy.end_date - timedelta(hours=POLICY_RENEWAL_WINDOW_HOURS)
+    return renewal_window_start <= now < policy.end_date
 
 
 @router.post(
@@ -35,23 +51,59 @@ async def create_policy(
 ) -> Policy:
     """Create a new weekly income-loss insurance policy for the logged-in worker.
 
-    The pricing engine is called internally to compute the premium, coverage,
-    and risk score.  The policy starts immediately and runs for 7 days.
+        Rules enforced:
+        - If no policy is currently active, a new policy starts immediately for 7 days.
+        - If a policy is active, next week's policy can only be purchased in the
+            final 24 hours before the current policy ends.
+        - Renewed policy starts exactly when the current policy ends and runs 7 days.
     """
-    # Check for existing active policy
-    result = await db.execute(
-        select(Policy).where(
-            Policy.worker_id == current_worker.id,
-            Policy.status == "active",
-        )
-    )
-    if result.scalar_one_or_none():
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Worker already has an active policy. Wait for it to expire or cancel it first.",
-        )
-
     now = datetime.now(timezone.utc)
+    active_policy_result = await db.execute(
+        select(Policy)
+        .where(
+            Policy.worker_id == current_worker.id,
+            *_currently_active_policy_filters(now),
+        )
+        .order_by(Policy.start_date.desc())
+    )
+    current_active_policy = active_policy_result.scalars().first()
+
+    policy_start = now
+    if current_active_policy is not None:
+        if current_active_policy.end_date is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Current policy has no end date; renewal is unavailable. Please contact support.",
+            )
+
+        if not _is_within_renewal_window(current_active_policy, now):
+            renewal_window_start = current_active_policy.end_date - timedelta(
+                hours=POLICY_RENEWAL_WINDOW_HOURS
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    "You can buy next week's plan only in the final 24 hours of your current policy "
+                    f"({renewal_window_start.isoformat()} to {current_active_policy.end_date.isoformat()})."
+                ),
+            )
+
+        upcoming_policy_result = await db.execute(
+            select(Policy)
+            .where(
+                Policy.worker_id == current_worker.id,
+                Policy.status == "active",
+                Policy.start_date >= current_active_policy.end_date,
+            )
+            .order_by(Policy.start_date.asc())
+        )
+        if upcoming_policy_result.scalars().first() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Next week's policy is already purchased.",
+            )
+
+        policy_start = current_active_policy.end_date
 
     if payload and payload.selected_recommendation:
         selected = payload.selected_recommendation
@@ -73,8 +125,8 @@ async def create_policy(
             coverage_amount_inr=selected.max_payout,
             risk_score=selected_risk_score,
             risk_factors=json.dumps(risk_factor_names),
-            start_date=now,
-            end_date=now + timedelta(days=7),
+            start_date=policy_start,
+            end_date=policy_start + timedelta(days=POLICY_DURATION_DAYS),
         )
     else:
         # Default flow uses pricing engine when no recommendation was selected.
@@ -92,8 +144,8 @@ async def create_policy(
             coverage_amount_inr=breakdown.coverage_amount_inr,
             risk_score=breakdown.risk_score,
             risk_factors=json.dumps(risk_factor_names) if risk_factor_names else None,
-            start_date=now,
-            end_date=now + timedelta(days=7),
+            start_date=policy_start,
+            end_date=policy_start + timedelta(days=POLICY_DURATION_DAYS),
         )
     db.add(policy)
     await db.flush()

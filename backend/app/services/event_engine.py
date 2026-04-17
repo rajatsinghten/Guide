@@ -14,7 +14,7 @@ Phase 1 Triggers:
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.claim import Claim
@@ -86,6 +86,8 @@ async def process_event(
     if not evaluate_threshold(event_type, severity):
         return []
 
+    now = datetime.now(timezone.utc)
+
     # Find active policies for workers in the affected city
     stmt = (
         select(Policy)
@@ -93,6 +95,8 @@ async def process_event(
         .where(
             func.lower(func.trim(Worker.city)) == normalized_city.lower(),
             Policy.status == "active",
+            Policy.start_date <= now,
+            or_(Policy.end_date.is_(None), Policy.end_date > now),
         )
     )
     result = await db.execute(stmt)

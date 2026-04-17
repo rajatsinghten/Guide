@@ -32,7 +32,8 @@ async def weekly_premium_burn() -> None:
     The job:
     1. Fetches all active policies.
     2. Logs the premium amount that would be charged.
-    3. Marks expired policies (those past their ``end_date``).
+    3. Skips policies whose coverage has not started yet.
+    4. Marks expired policies (those past their ``end_date``).
     """
     logger.info("Running weekly premium burn simulation…")
 
@@ -45,14 +46,21 @@ async def weekly_premium_burn() -> None:
 
         total_burn = 0.0
         expired_count = 0
+        billed_count = 0
+        upcoming_count = 0
 
         for policy in active_policies:
-            if policy.end_date and policy.end_date < now:
+            if policy.end_date and policy.end_date <= now:
                 policy.status = "expired"
                 expired_count += 1
                 continue
 
+            if policy.start_date > now:
+                upcoming_count += 1
+                continue
+
             total_burn += policy.weekly_premium_inr
+            billed_count += 1
             logger.info(
                 "Premium burn: ₹%.2f for policy %s (worker %s)",
                 policy.weekly_premium_inr,
@@ -63,10 +71,11 @@ async def weekly_premium_burn() -> None:
         await session.commit()
 
     logger.info(
-        "Weekly burn complete: ₹%.2f total from %d policies, %d expired",
+        "Weekly burn complete: ₹%.2f total from %d billed policies, %d expired, %d upcoming skipped",
         total_burn,
-        len(active_policies) - expired_count,
+        billed_count,
         expired_count,
+        upcoming_count,
     )
 
 

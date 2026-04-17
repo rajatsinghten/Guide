@@ -20,21 +20,31 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final _service = WorkerService();
+  static const int _riskBannerCount = 3;
+  final PageController _riskPageController =
+      PageController(viewportFraction: 0.93);
   DashboardData? _data;
   bool _loading = true;
   String _error = '';
-  Timer? _timer;
+  Timer? _dashboardRefreshTimer;
+  Timer? _riskCarouselTimer;
+  int _riskIndex = 0;
 
   @override
   void initState() {
     super.initState();
     _load();
-    _timer = Timer.periodic(const Duration(seconds: 8), (_) => _load(silent: true));
+    _dashboardRefreshTimer =
+        Timer.periodic(const Duration(seconds: 8), (_) => _load(silent: true));
+    _riskCarouselTimer =
+        Timer.periodic(const Duration(seconds: 4), (_) => _advanceRiskBanner());
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
+    _dashboardRefreshTimer?.cancel();
+    _riskCarouselTimer?.cancel();
+    _riskPageController.dispose();
     super.dispose();
   }
 
@@ -42,10 +52,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (!silent) setState(() => _loading = true);
     try {
       final data = await _service.getDashboard();
-      if (mounted) setState(() { _data = data; _loading = false; _error = ''; });
+      if (mounted)
+        setState(() {
+          _data = data;
+          _loading = false;
+          _error = '';
+        });
     } catch (e) {
-      if (mounted) setState(() { _error = e.toString().replaceFirst('Exception: ', ''); _loading = false; });
+      if (mounted)
+        setState(() {
+          _error = e.toString().replaceFirst('Exception: ', '');
+          _loading = false;
+        });
     }
+  }
+
+  void _advanceRiskBanner() {
+    if (!mounted || !_riskPageController.hasClients) return;
+    final nextPage = (_riskIndex + 1) % _riskBannerCount;
+    _riskPageController.animateToPage(
+      nextPage,
+      duration: const Duration(milliseconds: 450),
+      curve: Curves.easeInOut,
+    );
   }
 
   @override
@@ -57,16 +86,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
           children: [
             // ── Header ────────────────────────────────────────────────
             Padding(
-              padding: const EdgeInsets.fromLTRB(GsSpacing.lg, GsSpacing.md, GsSpacing.md, GsSpacing.sm),
+              padding: const EdgeInsets.fromLTRB(
+                  GsSpacing.lg, GsSpacing.md, GsSpacing.md, GsSpacing.sm),
               child: Row(
                 children: [
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text('Good ${_greeting()}, ${worker?.name.split(' ').first ?? ''}',
+                        Text(
+                            'Good ${_greeting()}, ${worker?.name.split(' ').first ?? ''}',
                             style: GsTypography.subheading),
-                        Text("Here's your safety check today", style: GsTypography.caption),
+                        Text("Here's your safety check today",
+                            style: GsTypography.caption),
                       ],
                     ),
                   ),
@@ -84,7 +116,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   ),
                   const SizedBox(width: GsSpacing.xs),
                   IconButton(
-                    icon: const Icon(Icons.logout_rounded, size: 20, color: GsColors.textTertiary),
+                    icon: const Icon(Icons.logout_rounded,
+                        size: 20, color: GsColors.textTertiary),
                     onPressed: () async {
                       await AuthService().logout();
                       if (mounted) context.go('/login');
@@ -97,7 +130,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             // ── Content ───────────────────────────────────────────────
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator(color: GsColors.accent))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: GsColors.accent))
                   : _error.isNotEmpty
                       ? _errorView()
                       : _content(),
@@ -125,15 +159,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
             maxPayout: active?.coverageAmountInr ?? 0,
             validTill: active?.endDate,
             weeklyCost: active?.weeklyPremiumInr ?? 0,
-            onGetCoverage: () => context.go('/home/policies'),
+            onGetCoverage: () => context.go('/home/pricing'),
           ),
           const SizedBox(height: GsSpacing.md),
 
           // ── This week ──────────────────────────────────────────────
           Row(children: [
-            Expanded(child: _StatCard(label: 'Income Protected', value: _inr(d.incomeProtectedThisWeek))),
+            Expanded(
+                child: _StatCard(
+                    label: 'Income Protected',
+                    value: _inr(d.incomeProtectedThisWeek))),
             const SizedBox(width: GsSpacing.md),
-            Expanded(child: _StatCard(label: 'Payout This Month', value: _inr(d.payoutTotal))),
+            Expanded(
+                child: _StatCard(
+                    label: 'Payout This Month', value: _inr(d.payoutTotal))),
           ]),
           const SizedBox(height: GsSpacing.md),
 
@@ -146,36 +185,27 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   Text('Risk Today', style: GsTypography.subheading),
                   const Spacer(),
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: GsSpacing.sm, vertical: 2),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: GsSpacing.sm, vertical: 2),
                     decoration: BoxDecoration(
                       color: GsColors.accent.withOpacity(0.1),
                       borderRadius: GsShapes.xl,
                     ),
-                    child: Text('Live · 8s', style: GsTypography.caption.copyWith(color: GsColors.accent, fontSize: 10)),
+                    child: Text('Live · 8s',
+                        style: GsTypography.caption
+                            .copyWith(color: GsColors.accent, fontSize: 10)),
                   ),
                 ]),
                 const SizedBox(height: GsSpacing.sm),
-                if (risk != null) ...[
-                  _RiskRow(label: 'Weather', value: risk['weather_condition'] as String? ?? '—'),
-                  _RiskRow(label: 'Traffic', value: risk['traffic_level'] as String? ?? '—'),
-                  _RiskRow(
-                    label: 'Precipitation',
-                    value: '${((risk['precipitation_mm'] as num?)?.toDouble() ?? 0).toStringAsFixed(1)} mm',
-                  ),
-                  if (risk['note'] != null) ...[
-                    const SizedBox(height: GsSpacing.sm),
-                    Container(
-                      padding: const EdgeInsets.all(GsSpacing.sm),
-                      decoration: BoxDecoration(
-                        color: GsColors.warningSoft,
-                        borderRadius: GsShapes.sm,
-                      ),
-                      child: Text(risk['note'] as String,
-                          style: GsTypography.caption.copyWith(color: GsColors.warning)),
-                    ),
-                  ],
-                ] else
-                  Text('No risk signal right now.', style: GsTypography.body.copyWith(color: GsColors.success)),
+                _RiskCarousel(
+                  risk: risk,
+                  controller: _riskPageController,
+                  activeIndex: _riskIndex,
+                  onPageChanged: (index) {
+                    if (!mounted || _riskIndex == index) return;
+                    setState(() => _riskIndex = index);
+                  },
+                ),
               ],
             ),
           ),
@@ -185,7 +215,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
           GsCard(
             color: GsColors.successSoft,
             child: Row(children: [
-              const Icon(Icons.check_circle_outline, color: GsColors.success, size: 20),
+              const Icon(Icons.check_circle_outline,
+                  color: GsColors.success, size: 20),
               const SizedBox(width: GsSpacing.sm),
               Expanded(
                 child: Text(
@@ -200,7 +231,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             color: GsColors.primary,
             child: Text(
               'No forms. No claims. Money sent automatically.',
-              style: GsTypography.body.copyWith(color: Colors.white, fontWeight: FontWeight.w600),
+              style: GsTypography.body
+                  .copyWith(color: Colors.white, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -215,7 +247,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.cloud_off_rounded, size: 40, color: GsColors.textTertiary),
+            const Icon(Icons.cloud_off_rounded,
+                size: 40, color: GsColors.textTertiary),
             const SizedBox(height: GsSpacing.md),
             Text(_error, style: GsTypography.body, textAlign: TextAlign.center),
             const SizedBox(height: GsSpacing.md),
@@ -260,7 +293,7 @@ class _ProtectionCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(GsSpacing.md + 4),
       decoration: BoxDecoration(
-        color: isActive ? GsColors.primary : GsColors.error,
+        color: isActive ? GsColors.success : GsColors.error,
         borderRadius: GsShapes.lg,
         boxShadow: GsShadows.card,
       ),
@@ -269,7 +302,8 @@ class _ProtectionCard extends StatelessWidget {
         children: [
           Row(children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: GsSpacing.sm, vertical: 4),
+              padding: const EdgeInsets.symmetric(
+                  horizontal: GsSpacing.sm, vertical: 4),
               decoration: BoxDecoration(
                 color: Colors.white.withOpacity(0.15),
                 borderRadius: GsShapes.xl,
@@ -283,7 +317,8 @@ class _ProtectionCard extends StatelessWidget {
                 const SizedBox(width: 6),
                 Text(
                   isActive ? 'ACTIVE COVERAGE' : 'NOT COVERED',
-                  style: GsTypography.label.copyWith(color: Colors.white, fontSize: 11, letterSpacing: 1),
+                  style: GsTypography.label.copyWith(
+                      color: Colors.white, fontSize: 11, letterSpacing: 1),
                 ),
               ]),
             ),
@@ -297,24 +332,31 @@ class _ProtectionCard extends StatelessWidget {
           const SizedBox(height: GsSpacing.lg),
           Text(
             isActive ? _inr(maxPayout) : 'Get Protected',
-            style: GsTypography.heading.copyWith(color: Colors.white, fontSize: 32),
+            style: GsTypography.heading
+                .copyWith(color: Colors.white, fontSize: 32),
           ),
           const SizedBox(height: 4),
           Text(
-            isActive ? 'Weekly Max payout · ${_inr(weeklyCost)} cost' : 'Identify your risks and get covered',
-            style: GsTypography.caption.copyWith(color: Colors.white.withOpacity(0.8)),
+            isActive
+                ? 'Weekly Max payout · ${_inr(weeklyCost)} cost'
+                : 'Identify your risks and get covered',
+            style: GsTypography.caption
+                .copyWith(color: Colors.white.withOpacity(0.8)),
           ),
           if (!isActive) ...[
             const SizedBox(height: GsSpacing.md),
             InkWell(
               onTap: onGetCoverage,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: GsSpacing.md, vertical: GsSpacing.sm),
+                padding: const EdgeInsets.symmetric(
+                    horizontal: GsSpacing.md, vertical: GsSpacing.sm),
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: GsShapes.md,
                 ),
-                child: Text('Get Coverage', style: GsTypography.button.copyWith(color: GsColors.primary)),
+                child: Text('Get Coverage',
+                    style:
+                        GsTypography.button.copyWith(color: GsColors.primary)),
               ),
             ),
           ],
@@ -345,7 +387,9 @@ class _StatCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(value, style: GsTypography.subheading.copyWith(fontSize: 18, color: GsColors.accent)),
+          Text(value,
+              style: GsTypography.subheading
+                  .copyWith(fontSize: 18, color: GsColors.accent)),
           const SizedBox(height: 2),
           Text(label, style: GsTypography.caption),
         ],
@@ -354,21 +398,188 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _RiskRow extends StatelessWidget {
-  final String label;
-  final String value;
+class _RiskCarousel extends StatelessWidget {
+  final Map<String, dynamic>? risk;
+  final PageController controller;
+  final int activeIndex;
+  final ValueChanged<int> onPageChanged;
 
-  const _RiskRow({required this.label, required this.value});
+  const _RiskCarousel({
+    required this.risk,
+    required this.controller,
+    required this.activeIndex,
+    required this.onPageChanged,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: GsSpacing.xs),
-      child: Row(children: [
-        Text(label, style: GsTypography.body),
-        const Spacer(),
-        Text(value, style: GsTypography.body.copyWith(color: GsColors.textPrimary, fontWeight: FontWeight.w600)),
-      ]),
+    final slides = _buildSlides(risk);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SizedBox(
+          height: 112,
+          child: PageView.builder(
+            controller: controller,
+            itemCount: slides.length,
+            onPageChanged: onPageChanged,
+            itemBuilder: (context, index) {
+              final slide = slides[index];
+              return Padding(
+                padding: EdgeInsets.only(
+                  right: index == slides.length - 1 ? 0 : GsSpacing.sm,
+                ),
+                child: _RiskBanner(slide: slide),
+              );
+            },
+          ),
+        ),
+        const SizedBox(height: GsSpacing.sm),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: List.generate(
+            slides.length,
+            (index) => AnimatedContainer(
+              duration: const Duration(milliseconds: 220),
+              margin: const EdgeInsets.symmetric(horizontal: 3),
+              width: activeIndex == index ? 18 : 6,
+              height: 6,
+              decoration: BoxDecoration(
+                color:
+                    activeIndex == index ? GsColors.primary : GsColors.divider,
+                borderRadius: BorderRadius.circular(24),
+              ),
+            ),
+          ),
+        ),
+        if (risk?['note'] != null) ...[
+          const SizedBox(height: GsSpacing.sm),
+          Container(
+            padding: const EdgeInsets.all(GsSpacing.sm),
+            decoration: BoxDecoration(
+              color: GsColors.warningSoft,
+              borderRadius: GsShapes.sm,
+            ),
+            child: Text(
+              risk?['note'] as String? ?? '',
+              style: GsTypography.caption.copyWith(color: GsColors.warning),
+            ),
+          ),
+        ],
+      ],
     );
   }
+
+  List<_RiskBannerData> _buildSlides(Map<String, dynamic>? risk) {
+    final weather = (risk?['weather_condition'] as String?)?.trim();
+    final traffic = (risk?['traffic_level'] as String?)?.trim();
+    final precipitation = ((risk?['precipitation_mm'] as num?)?.toDouble() ?? 0)
+        .toStringAsFixed(1);
+
+    return [
+      _RiskBannerData(
+        label: 'Weather',
+        value: weather == null || weather.isEmpty ? 'No signal' : weather,
+        subtitle: 'Local conditions around you',
+        icon: Icons.wb_cloudy_outlined,
+        colors: const [Color(0xFFE0F2FE), Color(0xFFF8FAFC)],
+      ),
+      _RiskBannerData(
+        label: 'Traffic',
+        value: traffic == null || traffic.isEmpty ? 'No signal' : traffic,
+        subtitle: 'Road movement in your route',
+        icon: Icons.traffic_outlined,
+        colors: const [Color(0xFFFFF7ED), Color(0xFFFFFBEB)],
+      ),
+      _RiskBannerData(
+        label: 'Precipitation',
+        value: '$precipitation mm',
+        subtitle: 'Rain intensity right now',
+        icon: Icons.grain_outlined,
+        colors: const [Color(0xFFEEF2FF), Color(0xFFF8FAFC)],
+      ),
+    ];
+  }
+}
+
+class _RiskBanner extends StatelessWidget {
+  final _RiskBannerData slide;
+
+  const _RiskBanner({required this.slide});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(GsSpacing.md),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: slide.colors,
+        ),
+        borderRadius: GsShapes.md,
+        border: Border.all(color: Colors.black.withOpacity(0.06)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 40,
+            height: 40,
+            decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.85),
+              borderRadius: GsShapes.sm,
+            ),
+            child: Icon(slide.icon, color: GsColors.textPrimary, size: 20),
+          ),
+          const SizedBox(width: GsSpacing.sm),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  slide.label.toUpperCase(),
+                  style: GsTypography.label
+                      .copyWith(color: GsColors.textSecondary),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  slide.value,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GsTypography.subheading.copyWith(
+                    color: GsColors.textPrimary,
+                    fontSize: 17,
+                  ),
+                ),
+                Text(
+                  slide.subtitle,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: GsTypography.caption
+                      .copyWith(color: GsColors.textSecondary),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _RiskBannerData {
+  final String label;
+  final String value;
+  final String subtitle;
+  final IconData icon;
+  final List<Color> colors;
+
+  const _RiskBannerData({
+    required this.label,
+    required this.value,
+    required this.subtitle,
+    required this.icon,
+    required this.colors,
+  });
 }

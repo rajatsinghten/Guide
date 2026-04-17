@@ -8,7 +8,7 @@ import uuid as _uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.claim import Claim
@@ -39,13 +39,16 @@ async def create_manual_claim(
     NOTE: This endpoint is a temporary fallback while event-driven claim
     automation is being finalized.
     """
+    now = datetime.now(timezone.utc)
     policy_result = await db.execute(
         select(Policy)
         .where(
             Policy.worker_id == current_worker.id,
             Policy.status == "active",
+            Policy.start_date <= now,
+            or_(Policy.end_date.is_(None), Policy.end_date > now),
         )
-        .order_by(Policy.created_at.desc())
+        .order_by(Policy.start_date.desc())
     )
     active_policy = policy_result.scalars().first()
 
