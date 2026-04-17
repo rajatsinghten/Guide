@@ -4,7 +4,7 @@ import 'package:http/http.dart' as http;
 import '../app/constants.dart';
 
 class ApiService {
-  static const String _baseUrl = AppConstants.baseUrl;
+  static final String _baseUrl = AppConstants.baseUrl;
 
   /// POST /verification/start
   Future<Map<String, dynamic>> startVerification({

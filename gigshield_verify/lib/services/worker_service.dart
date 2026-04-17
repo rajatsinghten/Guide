@@ -36,7 +36,8 @@ class Claim {
         eventType = j['event_type'] as String? ?? 'unknown',
         claimAmountInr = (j['payout_amount_inr'] as num? ?? 0).toDouble(),
         status = j['status'] as String? ?? 'pending',
-        createdAt = j['triggered_at'] as String? ?? j['created_at'] as String? ?? '';
+        createdAt =
+            j['triggered_at'] as String? ?? j['created_at'] as String? ?? '';
 }
 
 class Payout {
@@ -49,7 +50,8 @@ class Payout {
       : id = j['id'] as String? ?? '',
         amountInr = (j['amount_inr'] as num? ?? 0).toDouble(),
         status = j['status'] as String? ?? 'pending',
-        paidAt = j['processed_at'] as String? ?? j['created_at'] as String? ?? '';
+        paidAt =
+            j['processed_at'] as String? ?? j['created_at'] as String? ?? '';
 }
 
 class DashboardData {
