@@ -1,0 +1,41 @@
+name: gigshield_verify
+description: GigShield Verification Prototype
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  uuid: ^4.4.0
+  geolocator: ^13.0.2
+  http: ^1.2.1
+  shared_preferences: ^2.3.2
+  permission_handler: ^11.3.1
+  package_info_plus: ^8.1.1
+  device_info_plus: ^10.1.2
+  intl: ^0.19.0
+  google_fonts: ^6.2.1
+  go_router: ^14.6.3
+  provider: ^6.1.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.3
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: false
+  image_path: "assets/images/logo.png"
+  min_sdk_android: 21
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/logo.png
