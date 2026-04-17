@@ -4,10 +4,10 @@ Provides at-a-glance metrics for individual workers (their policy, claims,
 payouts) and platform-wide admin statistics (total workers, liability, etc.).
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.claim import Claim
@@ -33,17 +33,23 @@ async def worker_dashboard(
     - Claims this month
     - Total payouts received
     """
+    now = datetime.now(timezone.utc)
+
     # Active policy
     policy_result = await db.execute(
-        select(Policy).where(
+        select(Policy)
+        .where(
             Policy.worker_id == current_worker.id,
             Policy.status == "active",
+            Policy.start_date <= now,
+            or_(Policy.end_date.is_(None), Policy.end_date > now),
         )
+        .order_by(Policy.start_date.desc())
     )
-    active_policy = policy_result.scalar_one_or_none()
+    active_policy = policy_result.scalars().first()
 
     # Claims this month
-    month_start = datetime.now(timezone.utc).replace(
+    month_start = now.replace(
         day=1, hour=0, minute=0, second=0, microsecond=0
     )
     claims_result = await db.execute(
@@ -101,13 +107,19 @@ async def admin_dashboard(
     - Total payout liability
     - Top disruption event type
     """
+    now = datetime.now(timezone.utc)
+
     # Total workers
     workers_result = await db.execute(select(func.count(Worker.id)))
     total_workers = workers_result.scalar() or 0
 
     # Active policies
     policies_result = await db.execute(
-        select(func.count(Policy.id)).where(Policy.status == "active")
+        select(func.count(Policy.id)).where(
+            Policy.status == "active",
+            Policy.start_date <= now,
+            or_(Policy.end_date.is_(None), Policy.end_date > now),
+        )
     )
     active_policies = policies_result.scalar() or 0
 

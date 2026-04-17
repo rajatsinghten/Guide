@@ -15,6 +15,8 @@ CURFEW_STRIKE_FLAG = True          # Boolean trigger
 # ── Coverage Tiers ──────────────────────────────────────────────────────────
 
 COVERAGE_RATIO = 0.80  # 80 % income replacement
+POLICY_DURATION_DAYS = 7
+POLICY_RENEWAL_WINDOW_HOURS = 24
 
 # ── Pricing Constants ───────────────────────────────────────────────────────
 

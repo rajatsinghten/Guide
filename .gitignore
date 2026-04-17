@@ -1,0 +1,48 @@
+# ------------------------------
+# OS / Editor files
+# ------------------------------
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ------------------------------
+# Python / FastAPI backend
+# ------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+.eggs/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+backend/.venv/
+
+# Local environment files
+.env
+.env.*
+backend/.env
+backend/.env.*
+!.env.example
+!backend/.env.example
+
+# Logs and local databases
+*.log
+*.sqlite3
+*.db
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Optional runtime uploads (keep folder if needed)
+backend/uploads/*
+!backend/uploads/.gitkeep

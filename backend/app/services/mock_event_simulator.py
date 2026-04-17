@@ -9,7 +9,7 @@ import random
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.claim import Claim
@@ -137,10 +137,15 @@ def _next_signal_for_policy(cursor_key: str) -> tuple[int, RiskSignalInput]:
 
 async def _active_policy_cities(db: AsyncSession) -> list[str]:
     """Return distinct worker cities that currently have active policies."""
+    now = datetime.now(timezone.utc)
     stmt = (
         select(Worker.city)
         .join(Policy, Policy.worker_id == Worker.id)
-        .where(Policy.status == "active")
+        .where(
+            Policy.status == "active",
+            Policy.start_date <= now,
+            or_(Policy.end_date.is_(None), Policy.end_date > now),
+        )
         .distinct()
     )
     result = await db.execute(stmt)
@@ -286,58 +291,35 @@ async def next_worker_risk_snapshot(
     """Return the next rotating risk signal and trigger claims when needed.
 
     Rules:
-    1. If no active policy, simulation stays idle.
-    2. If a claim already exists for the current active policy, simulation pauses.
-    3. When a new policy is selected (new policy id), simulation resumes from step 1.
+    1. Risk signal simulation always rotates.
+    2. If no active policy, claim creation is skipped.
+    3. If a claim already exists for the current active policy, additional
+       auto-claim creation is skipped, but simulation keeps running.
     """
     worker_city = (worker.city or "").strip()
     city = worker_city if worker_city else "Mumbai"
 
-    if active_policy is None:
-        idle_signal = _build_risk_signal_pool()[0]
-        idle_event = _derive_event_from_signal(idle_signal, city)
-        return {
-            "sample_index": 0,
-            "weather_condition": idle_signal.weather_condition,
-            "traffic_level": idle_signal.traffic_level,
-            "precipitation_mm": idle_signal.precipitation_mm,
-            "event_type": idle_event.event_type,
-            "severity": "low",
-            "threshold_crossed": False,
-            "claims_created": 0,
-            "claim_ids": [],
-            "note": "Simulation paused. Choose this week's plan to start risk tracking.",
-        }
+    policy_cursor = str(active_policy.id) if active_policy is not None else "no-policy"
+    cursor_key = f"{worker.id}:{policy_cursor}"
 
-    cursor_key = f"{worker.id}:{active_policy.id}"
-
-    existing_claim_result = await db.execute(
-        select(Claim.id).where(Claim.policy_id == active_policy.id).limit(1)
-    )
-    if existing_claim_result.scalar_one_or_none() is not None:
-        paused_index = _WORKER_RISK_CURSOR.get(cursor_key, 1)
-        signal_pool = _build_risk_signal_pool()
-        paused_signal = signal_pool[(paused_index - 1) % len(signal_pool)]
-        paused_event = _derive_event_from_signal(paused_signal, city)
-        return {
-            "sample_index": paused_index,
-            "weather_condition": paused_signal.weather_condition,
-            "traffic_level": paused_signal.traffic_level,
-            "precipitation_mm": paused_signal.precipitation_mm,
-            "event_type": paused_event.event_type,
-            "severity": paused_event.severity,
-            "threshold_crossed": False,
-            "claims_created": 0,
-            "claim_ids": [],
-            "note": "Simulation paused for this policy because a claim already exists. Choose next week's plan to restart.",
-        }
+    has_existing_claim = False
+    if active_policy is not None:
+        existing_claim_result = await db.execute(
+            select(Claim.id).where(Claim.policy_id == active_policy.id).limit(1)
+        )
+        has_existing_claim = existing_claim_result.scalar_one_or_none() is not None
 
     sample_index, signal = _next_signal_for_policy(cursor_key)
     derived_event = _derive_event_from_signal(signal, city)
     timestamp = datetime.now(timezone.utc)
 
     claim_ids: list[str] = []
-    if derived_event.threshold_crossed:
+    can_auto_claim = (
+        derived_event.threshold_crossed
+        and active_policy is not None
+        and not has_existing_claim
+    )
+    if can_auto_claim:
         created_claim_ids = await process_event(
             db=db,
             event_type=derived_event.event_type,
@@ -348,8 +330,18 @@ async def next_worker_risk_snapshot(
         claim_ids = [str(claim_id) for claim_id in created_claim_ids]
 
     note = None
-    if derived_event.threshold_crossed and not claim_ids:
-        note = "Threshold crossed, but no eligible active policy matched for auto-claim."
+    if derived_event.threshold_crossed:
+        if active_policy is None:
+            note = (
+                "Threshold crossed, but no active plan is selected for auto-claim."
+            )
+        elif has_existing_claim:
+            note = (
+                "Threshold crossed. Simulation continues, but this plan already has "
+                "a claim so no new auto-claim was created."
+            )
+        elif not claim_ids:
+            note = "Threshold crossed, but no eligible active policy matched for auto-claim."
 
     return {
         "sample_index": sample_index,
